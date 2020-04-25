@@ -1,106 +1,107 @@
 #include "motor.h"
-#include "gyro_acsel.h"
+#include "mpu6050.h"
 
-//=================================================================
-
-//начальное смещение нуля баланса.
+// Начальное смещение нуля баланса
 double zeroDeviation = 3;
 
-//уменьшаем частоту ШИМ 
+// Уменьшаем частоту ШИМ 
 //до 200Гц или 60Гц
-//====================================
-//8 бит, 244,14 Гц
-//для 5 и 6 пин
+
+// 8 бит, 244,14 Гц
+// для 5 и 6 пин
 //TCCR0B = TCCR0B & 0b11111000 | 0x04;
-//=====================================
-//8 бит, 61,04 Гц
+
+// 8 бит, 61,04 Гц
 //TCCR0B = TCCR0B & 0b11111000 | 0x05;
-//=====================================
 
-void setup()
-{
+int i = 0;
+uint32_t timer = micros();
+uint32_t timer2;
+double alfa = 0.001; // Коэффициент смешивания комплементарного фильтра
+uint8_t f, b = 0; 
+int balansir = 0;
+float accelAngle = 0; // Угол наклона по акселерометру
+float gyroAngle = 0; // Угол наклона по гироскопу
 
+
+void setup() {
   motor1.setSpeed(255);
   motor2.setSpeed(255);
-  _stop();
-  giroscop_setup();
+  setupGyro();
   Serial.begin(115200);
-  _stop();
+  stopEngine();
 }
 
-void loop()
-{
-  int i = 0;
-  uint32_t timer = micros();
-  uint32_t timer2;
-  double alfa = 0.001;
-  uint8_t f, b; f = b = 0;
-  int balansir = 0;
-  float  AcXsum = 0;
-  float  GyYsum = 0;
-
-  while (true)
-  {
-    if (GyYsum > 1.0)
-    {
-      backward(); if ((b > 2) && (GyYsum < 5.0)) {
-        b = 0;
-        _stop();
-      }
-      else if ((b > 1) && (GyYsum < 2.0)) {
-        b = 0;
-        _stop();
-      }
-      f = 0; b++;
-      balansir++;
-    }
-    else if (GyYsum < -1.0)
-    {
-      forward();
-      if ((f > 2) && (GyYsum > -5.0)) {
-        f = 0;
-        _stop();
-      }
-      else if ((f > 1) && (GyYsum > -2.0)) {
-        f = 0;
-        _stop();
-      }
-      b = 0; f++;
-      balansir--;
-    }
-    else {
-      _stop();
-    }
-    //Запрос данных с MPU-6050
-    Data_mpu6050();
-    //Расчет угла по показаниям акселерометра
-    // с учетом корректировки точки равновесия balancing_zerro.
-    AcXsum = (atan2(AcX, AcZ)) * RAD_TO_DEG + zeroDeviation;
-    // Измерение наклона по Х.
-    // Использование Комплементарного фильтра,
-    // alfa - коэффициент фильтра.
-    alfa = 0.001;
-    timer2 = timer;
-    timer = micros();
-    GyYsum = (1 - alfa) * (GyYsum - ((double)GyY * (double)(timer - timer2)) / 131000000.0) + alfa * AcXsum;
-
-//    if (balansir <-1) {
-//      GyYsum -= 0.08;
-//      balancing_zerro -= 0.006;
-//      balansir = 0;
-//      //balansir++;
-//    }
-//    if (balansir > 1) {
-//      GyYsum += 0.08;
-//      balancing_zerro += 0.006;
-//      balansir = 0; 
-//      //balansir--;
-//    }
+void loop() {
+  
+  // Логика балансировки
+  // Если угол больше 1 - движение вперед, если меньше -1 - назад.
+  if (gyroAngle > 1.0) {
+    forward();
+    balansir++;
     
-     i++;
-    if(i==500){
-      Serial.print("GyYsum="); Serial.println( GyYsum ); 
-      Serial.print("balancing_zerro="); Serial.println( zeroDeviation ); 
-    i=0;}
+    // ШИМ регуляция
+    if ((b > 2) && (gyroAngle < 5.0)) {
+      b = 0;
+      stopEngine();
+    } else if ((b > 1) && (gyroAngle < 2.0)) {
+      b = 0;
+      stopEngine();
+    }
+    f = 0; 
+    b++;
+    
+  } else if (gyroAngle < -1.0) {
+    backward();
+    balansir--;
+    
+    // ШИМ регуляция
+    if ((f > 2) && (gyroAngle > -5.0)) 
+    {
+      f = 0;
+      stopEngine();
+    } else if ((f > 1) && (gyroAngle > -2.0)) {
+      f = 0;
+      stopEngine();
+    }
+    b = 0; f++;
+    
+  }
+  else {
+    stopEngine();
+  }
+  
+  // Запрос данных с MPU-6050
+  getData();
+  
+  // Расчет угла по показаниям акселерометра
+  // с учетом корректировки точки равновесия balancing_zerro.
+  accelAngle = (atan2(AcX, AcZ)) * RAD_TO_DEG + zeroDeviation;
+  
+  // Измерение наклона по Х.
+  // Использование Комплементарного фильтра,
+  alfa = 0.001;
+  timer2 = timer;
+  timer = micros();
+  gyroAngle = (1 - alfa) * (gyroAngle - ((double)GyY * (double)(timer - timer2)) / 131000000.0) + alfa * accelAngle;
+  
+  // Автокоррекция нуля баланса
+  if (balansir < -1) {
+    gyroAngle -= 0.08; // Быстро изменяем угол наклона
+    zeroDeviation -= 0.006; // Коррекция нуля баланса с течением времени
+    balansir = 0;
+  }
+  if (balansir > 1) {
+    gyroAngle += 0.08;
+    zeroDeviation += 0.006;
+    balansir = 0; 
+  }
+  
+  // Логирование в консоль
+  i++;
+  if(i == 500) {
+    Serial.print("Угол наклона = "); Serial.println(gyroAngle); 
+    Serial.print("Нуль баланса = "); Serial.println(zeroDeviation); 
+    i=0;
   }
 }
