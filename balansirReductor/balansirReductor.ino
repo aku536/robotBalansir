@@ -1,3 +1,4 @@
+#include <SoftwareSerial.h>
 #include "motor.h"
 #include "mpu6050.h"
 
@@ -18,17 +19,19 @@ int i = 0;
 uint32_t timer = micros();
 uint32_t timer2;
 double alfa = 0.001; // Коэффициент смешивания комплементарного фильтра
-uint8_t f, b = 0; 
-int balansir = 0;
+uint8_t f, b = 0; // Переменные для ШИМ-регуляции
+int autobalance = 0; // Переменная, определяющая необходимость автобалансировки
 float accelAngle = 0; // Угол наклона по акселерометру
 float gyroAngle = 0; // Угол наклона по гироскопу
+SoftwareSerial BTSerial (2, 3); // Настройка bluetooth
 
 
 void setup() {
   motor1.setSpeed(255);
   motor2.setSpeed(255);
   setupGyro();
-  Serial.begin(115200);
+  Serial.begin(9600);
+  BTSerial.begin(38400);
   stopEngine();
 }
 
@@ -38,7 +41,7 @@ void loop() {
   // Если угол больше 1 - движение вперед, если меньше -1 - назад.
   if (gyroAngle > 1.0) {
     forward();
-    balansir++;
+    autobalance++;
     
     // ШИМ регуляция
     if ((b > 2) && (gyroAngle < 5.0)) {
@@ -53,7 +56,7 @@ void loop() {
     
   } else if (gyroAngle < -1.0) {
     backward();
-    balansir--;
+    autobalance--;
     
     // ШИМ регуляция
     if ((f > 2) && (gyroAngle > -5.0)) 
@@ -86,22 +89,22 @@ void loop() {
   gyroAngle = (1 - alfa) * (gyroAngle - ((double)GyY * (double)(timer - timer2)) / 131000000.0) + alfa * accelAngle;
   
   // Автокоррекция нуля баланса
-  if (balansir < -1) {
+  if (autobalance < -1) {
     gyroAngle -= 0.08; // Быстро изменяем угол наклона
     zeroDeviation -= 0.006; // Коррекция нуля баланса с течением времени
-    balansir = 0;
+    autobalance = 0;
   }
-  if (balansir > 1) {
+  if (autobalance > 1) {
     gyroAngle += 0.08;
     zeroDeviation += 0.006;
-    balansir = 0; 
+    autobalance = 0; 
   }
   
   // Логирование в консоль
   i++;
   if(i == 500) {
-    Serial.print("Угол наклона = "); Serial.println(gyroAngle); 
-    Serial.print("Нуль баланса = "); Serial.println(zeroDeviation); 
+    BTSerial.print("Угол наклона = "); BTSerial.println(gyroAngle); 
+//    BTSerial.print("Нуль баланса = "); BTSerial.println(zeroDeviation); 
     i=0;
   }
 }
